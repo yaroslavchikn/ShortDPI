@@ -1,0 +1,64 @@
+name: build-signed-apk
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          yes | "$ANDROID_HOME/tools/bin/sdkmanager" --licenses || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.7
+
+      - name: Generate temporary signing keystore
+        run: |
+          cd app
+          KEYSTORE_PASSWORD=$(openssl rand -hex 16)
+          KEY_PASSWORD="$KEYSTORE_PASSWORD"
+
+          keytool -genkeypair \
+            -v \
+            -keystore release.keystore \
+            -alias dpibypass \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -dname "CN=DPI Bypass, OU=Dev, O=Dev, L=Local, ST=Local, C=US"
+
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/app/release.keystore" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=dpibypass" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        run: |
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dpi-bypass-release
+          path: app/build/outputs/apk/release/app-release.apk
